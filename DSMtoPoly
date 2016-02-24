@@ -1,0 +1,265 @@
+#
+#DSM to Polygon
+#
+#Function: extracts polygons representing tree crowns from digital surface model
+#
+#Input: DSM layer, generated from lidar point cloud or otherwise, normalized for altitude
+#Ground should be set to 0
+#
+#output: shapefile featuring polygons representative of tree crown areas
+#
+#Author: Jamie Perkins
+#Email: jp2081@wildcats.unh.edu
+#
+
+#GUI Inputs
+##Plot_Code=string
+##DSM=raster
+##Use_Mask=boolean
+##Mask_Image=raster
+##outlayer=output vector
+##Set_temp_Directory=folder
+
+from qgis.core import *
+from PyQt4.QtGui import *
+from PyQt4.QtCore import *
+from qgis.analysis import *
+import processing
+import os
+
+print '\n\nStarting...'
+
+#change variable names to something more manageable
+dsm = DSM
+plotCode = Plot_Code
+tempDir = Set_temp_Directory
+mask = Mask_Image
+maskQuery = Use_Mask
+if not maskQuery:
+    mask = None
+
+print tempDir
+
+
+def removeTopo(dsm_raster, temporary_dir, plot_code, mask_raster, maskQ):
+
+    #set as ground threshold, all values below will be set to 0
+    threshdn = 3
+    threshup = 80
+    
+    print '\tRemoving topography below threshold {0}'.format(threshdn)
+    print '\tand above {0}'.format(threshup)
+    
+    #entries list for storing raster calculator info
+    entries = []
+    
+    #check for mask layer
+    if maskQ is True:
+        print '\t Mask file: {0}'.format(mask_raster)
+        maskQ = True
+        #load mask layer
+        mask_info = QFileInfo(mask_raster)
+        mName = mask_info.basename()
+        maskLayer = QgsRasterLayer(mask_raster,mName)
+        if not maskLayer.isValid():
+            print '\tMask layer failed to load!'
+            
+        mask1 = QgsRasterCalculatorEntry()
+        mask1.ref = 'mask@1'
+        mask1.raster = maskLayer
+        mask1.bandNumber = 1
+        entries.append( mask1 )
+    else:
+        print '\tNo mask used'
+            
+    
+    #load dsm layer
+    file_info = QFileInfo(dsm_raster)
+    bName = file_info.baseName()
+    dsmLayer = QgsRasterLayer(dsm_raster, bName)
+    if not dsmLayer.isValid():
+        print '\tDSM layer failed to load!'
+    
+    #removes all topopgraphy below a threshold to isolate tree crowns in DSM
+    #Define band1
+    dsm1 = QgsRasterCalculatorEntry()
+    dsm1.ref = 'dsm@1'
+    dsm1.raster = dsmLayer
+    dsm1.bandNumber = 1
+    entries.append( dsm1 )
+
+    #generate out file name
+    calcFile = '{0}_noTopo.tif'.format(plot_code)
+    calcPath = os.path.join(temporary_dir, calcFile)
+    print '\tWriting to {0}'.format(calcPath)
+
+    #process calculation with input extent and resolution
+    #calculation is to remove all data points below threshold
+    if maskQ is False:
+        calcString = '({0}>{1})*({0}<{2})*{0}'.format(dsm1.ref, threshdn, threshup)
+    else:
+        calcString = '({0}>{1})*({0}<{2})*{0}*{3}'.format(dsm1.ref, threshdn, threshup,mask1.ref)
+    #calcStringLog = 'Raster calculation: {0}'.format(calcString)
+    #QgsMessageLog.logMessage(calcStringLog, 'DSMtoPoly')
+
+    calc = QgsRasterCalculator( calcString, calcPath, 'GTiff', dsmLayer.extent(), dsmLayer.width(), dsmLayer.height(),  entries )
+
+    #report and calculation errors
+    #lookup error outputs on QGIS API tutorial
+    er = calc.processCalculation()
+    if er is not 0:
+        print '\tCalc error {0}'.format(er)
+    
+    return calcPath
+
+def closeFilter(no_topo, temp_directory, pCode):
+    
+    #generate filtered file path
+    #and process closing filter
+    
+    print '\tPerforming closing filter'
+    
+    filteredName = '{0}_Filtered.tif'.format(pCode)
+    filteredPath = os.path.join(temp_directory, filteredName)
+    print '\tWriting to {0}'.format(filteredPath)
+    
+    processing.runalg('saga:morphologicalfilter', no_topo,  1,  2, 3, filteredPath)
+    
+    return filteredPath    
+
+def segmentation(filtered_layer, temp_folder, plot):
+    
+    print '\tSegmenting image'
+    segName = '{0}_seg.tif'.format(plot)
+    segPath = os.path.join(temp_folder, segName)
+    print '\tWriting to {0}'.format(segPath)
+    
+    #runs watershed segmenation on image
+    processing.runalg('saga:watershedsegmentation',  filtered_layer, 1, 1, 1, 4, True, True, segPath, None, None)
+    
+    print '\tImage segmented'
+    
+    return segPath
+
+def segCalc(segmentation_layer, filtered_layer, temporary_folder, code):
+    
+    #multiplies no topo by dsm to isolate tree crowns
+    #load filtered raster
+    
+    print '\tRemoving ground from segmentation raster'
+    
+    filteredInfo = QFileInfo(filtered_layer)
+    filteredBase = filteredInfo.baseName()
+    filtLayer = QgsRasterLayer(filtered_layer, filteredBase)
+    if not filtLayer.isValid():
+        print '\tFiltered layer failed to load!'
+    
+    #fetch filtered raster params
+    entries = []
+    #Define filtered band1
+    filt1 = QgsRasterCalculatorEntry()
+    filt1.ref = 'filt@1'
+    filt1.raster = filtLayer
+    filt1.bandNumber = 1
+    entries.append( filt1 )
+    
+    #load segmented raster
+    segInfo = QFileInfo(segmentation_layer)
+    segBase = segInfo.baseName()
+    segLayer = QgsRasterLayer(segmentation_layer, segBase)
+    if not segLayer.isValid():
+        print '\tSegmentation layer failed to load!'
+    
+    #fetch segmented raster params
+    #Define filtered band1
+    seg1 = QgsRasterCalculatorEntry()
+    seg1.ref = 'seg@1'
+    seg1.raster = segLayer
+    seg1.bandNumber = 1
+    entries.append( seg1 )
+    
+    calcBase = '{0}_segRaster_clean.tif'.format(code)
+    calcPath = os.path.join(temporary_folder, calcBase)
+    print '\tWriting to {0}'.format(calcPath)
+    
+    calcString = '({0} > 0)*{1}'.format(filt1.ref, seg1.ref)
+    #print calcString
+    
+    calc = QgsRasterCalculator(calcString, calcPath, 'GTiff', segLayer.extent(), segLayer.width(), segLayer.height(),  entries )
+
+    er2 = calc.processCalculation()
+    if er2 is not 0:
+        print '\tCalc error {0}'.format(er2)
+    
+    return calcPath
+
+def polygonize(segmented_image, temp, plotcode):
+    
+    #outputs cleaned vectorized tree crowns
+    #setup output path
+    
+    print '\tPolygonizing segmentation layer'
+    
+    vecBase = '{0}_treeCrowns.shp'.format(plotcode)
+    vecPath = os.path.join(temp, vecBase)
+    print '\tWriting to {0}'.format(vecPath)
+    
+    processing.runalg('gdalogr:polygonize', segmented_image, 'DN', vecPath)
+    
+    #load new layer
+    treeLayer = QgsVectorLayer(vecPath, 'treePolygons','ogr')
+    if not treeLayer.isValid():
+        print '\ttreeLayer failed to load!'
+    
+    print '\tRemoving ground polygons'
+    
+    #iterate over features, store those with DN=0 in list
+    rmList = []
+    iter = treeLayer.getFeatures()
+    for f in iter:
+        fid = f.id()
+        #print fid
+        fdn = f[0]
+        if fdn == 0:
+            rmList.append( fid )
+            
+    caps = treeLayer.dataProvider().capabilities()
+    if caps & QgsVectorDataProvider.DeleteFeatures:
+        res = treeLayer.dataProvider().deleteFeatures(rmList)
+    
+    print '\tCleaning tree polygons'
+    
+    #set extent for v.clean
+    ext = treeLayer.extent()
+    a = ext.xMinimum()
+    b = ext.xMaximum()
+    c = ext.yMinimum()
+    d = ext.yMaximum()
+    regionString = '{0},{1},{2},{3}'.format(a,b,c,d)
+    
+    #new vector output name
+    cleanBase = vecBase.replace('.shp', '_clean.shp')
+    cleanPath = os.path.join(temp, cleanBase)
+    print '\tWriting to {0}'.format(cleanPath)
+    
+    #clean up tree polygons, remove small areas
+    #10 -> rmarea
+    #threshold -> 1.4
+    #snap tolerance -> -1 (no snapping)
+    #v.in.org min area -> 0.0001
+    processing.runalg('grass:v.clean', vecPath, 10, 1.4, regionString, -1, 0.0001, cleanPath, None)
+    
+    return cleanPath
+
+#
+#run all processes
+#
+notopoLayer = removeTopo(dsm, tempDir, plotCode, mask, maskQuery)
+filteredLayer = closeFilter(notopoLayer, tempDir, plotCode)
+segLayer = segmentation(filteredLayer, tempDir, plotCode)
+cleanSeg = segCalc(segLayer, filteredLayer, tempDir, plotCode)
+treeVectors = polygonize(cleanSeg, tempDir, plotCode)
+
+outlayer = treeVectors
+
+print 'finished'
