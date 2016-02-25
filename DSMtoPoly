@@ -3,7 +3,7 @@
 #
 #Function: extracts polygons representing tree crowns from digital surface model
 #
-#Input: DSM layer, generated from lidar point cloud or otherwise, normalized for altitude
+#Input: DSM layer, generated from lidar point cloud or otherwise, normalized for elevation
 #Ground should be set to 0
 #
 #output: shapefile featuring polygons representative of tree crown areas
