@@ -17,7 +17,7 @@
 ##DSM=raster
 ##Use_Mask=boolean
 ##Mask_Image=raster
-##outlayer=output vector
+##Tree_Crowns=output vector
 ##Set_temp_Directory=folder
 
 from qgis.core import *
@@ -38,13 +38,15 @@ maskQuery = Use_Mask
 if not maskQuery:
     mask = None
 
-print tempDir
+print '\tIntermediate files will be saved to {0}'.format(tempDir)
 
 
 def removeTopo(dsm_raster, temporary_dir, plot_code, mask_raster, maskQ):
 
-    #set as ground threshold, all values below will be set to 0
+    #set threshold values
+    #all below will be set to 0
     threshdn = 3
+    #all above will be set to 0
     threshup = 80
     
     print '\tRemoving topography below threshold {0}'.format(threshdn)
@@ -260,6 +262,6 @@ segLayer = segmentation(filteredLayer, tempDir, plotCode)
 cleanSeg = segCalc(segLayer, filteredLayer, tempDir, plotCode)
 treeVectors = polygonize(cleanSeg, tempDir, plotCode)
 
-outlayer = treeVectors
+Tree_Crowns = treeVectors
 
 print 'finished'
