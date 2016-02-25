@@ -10,3 +10,6 @@ Output: Polygon shapefile featuring delineated tree crowns.
 Notes
 - Only tested with ENVI formatted height profile as input height field. For some reason does not work with BCAL lidar height profile outputs.
 - Reqires the OSGeo4W and SAGA modules to be properly installed within QGIS.
+
+Logo Information:
+Tree graphic by <a href="http://www.freepik.com/">Freepik</a> from <a href="http://www.flaticon.com/">Flaticon</a> is licensed under <a href="http://creativecommons.org/licenses/by/3.0/" title="Creative Commons BY 3.0">CC BY 3.0</a>. Made with <a href="http://logomakr.com" title="Logo Maker">Logo Maker</a>
