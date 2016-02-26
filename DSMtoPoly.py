@@ -45,7 +45,7 @@ if not maskQuery:
 progress.setInfo('\nIntermediate files will be saved to {0}'.format(tempDir))
 
 
-def removeTopo(dsm_raster, temporary_dir, plot_code, mask_raster, maskQ):
+def removeTopo(dsm_raster, mask_raster, maskQ):
     
     #entries list for storing raster calculator info
     entries = []
@@ -93,8 +93,8 @@ def removeTopo(dsm_raster, temporary_dir, plot_code, mask_raster, maskQ):
     entries.append( dsm1 )
 
     #generate out file name
-    calcFile = '{0}_noTopo.tif'.format(plot_code)
-    calcPath = os.path.join(temporary_dir, calcFile)
+    calcFile = '{0}_noTopo.tif'.format(global plotCode)
+    calcPath = os.path.join(global tempDir, calcFile)
     progress.setInfo( 'Writing to {0}'.format(calcPath) )
 
     #process calculation with input extent and resolution
@@ -116,26 +116,26 @@ def removeTopo(dsm_raster, temporary_dir, plot_code, mask_raster, maskQ):
     
     return calcPath
 
-def closeFilter(no_topo, temp_directory, pCode):
+def closeFilter(no_topo):
     
     #generate filtered file path
     #and process closing filter
     
     progress.setInfo( '\nPerforming closing filter' )
     
-    filteredName = '{0}_Filtered.tif'.format(pCode)
-    filteredPath = os.path.join(temp_directory, filteredName)
+    filteredName = '{0}_Filtered.tif'.format(global plotCode)
+    filteredPath = os.path.join(global tempDir, filteredName)
     progress.setInfo( 'Writing to {0}'.format(filteredPath) )
     
     processing.runalg('saga:morphologicalfilter', no_topo,  1,  2, 3, filteredPath)
     
     return filteredPath    
 
-def segmentation(filtered_layer, temp_folder, plot):
+def segmentation(filtered_layer):
     
     progress.setInfo( '\nSegmenting image' )
-    segName = '{0}_seg.tif'.format(plot)
-    segPath = os.path.join(temp_folder, segName)
+    segName = '{0}_seg.tif'.format(global plotCode)
+    segPath = os.path.join(global tempDir, segName)
     progress.setInfo( 'Writing to {0}'.format(segPath) )
     
     #runs watershed segmenation on image
@@ -145,7 +145,7 @@ def segmentation(filtered_layer, temp_folder, plot):
     
     return segPath
 
-def segCalc(segmentation_layer, filtered_layer, temporary_folder, code):
+def segCalc(segmentation_layer, filtered_layer):
     
     #multiplies no topo by dsm to isolate tree crowns
     #load filtered raster
@@ -182,8 +182,8 @@ def segCalc(segmentation_layer, filtered_layer, temporary_folder, code):
     seg1.bandNumber = 1
     entries.append( seg1 )
     
-    calcBase = '{0}_segRaster_clean.tif'.format(code)
-    calcPath = os.path.join(temporary_folder, calcBase)
+    calcBase = '{0}_segRaster_clean.tif'.format(global plotCode)
+    calcPath = os.path.join(global tempDir, calcBase)
     progress.setInfo( 'Writing to {0}'.format(calcPath) )
     
     calcString = '({0} > 0)*{1}'.format(filt1.ref, seg1.ref)
@@ -197,15 +197,15 @@ def segCalc(segmentation_layer, filtered_layer, temporary_folder, code):
     
     return calcPath
 
-def polygonize(segmented_image, temp, plotcode):
+def polygonize(segmented_image):
     
     #outputs cleaned vectorized tree crowns
     #setup output path
     
     progress.setInfo( '\nPolygonizing segmentation layer' )
     
-    vecBase = '{0}_treeCrowns.shp'.format(plotcode)
-    vecPath = os.path.join(temp, vecBase)
+    vecBase = '{0}_treeCrowns.shp'.format(global plotCode)
+    vecPath = os.path.join(global tempDir, vecBase)
     progress.setInfo( 'Writing to {0}'.format(vecPath) )
     
     processing.runalg('gdalogr:polygonize', segmented_image, 'DN', vecPath)
@@ -245,7 +245,7 @@ def polygonize(segmented_image, temp, plotcode):
     
     #new vector output name
     cleanBase = vecBase.replace('.shp', '_clean.shp')
-    cleanPath = os.path.join(temp, cleanBase)
+    cleanPath = os.path.join(global tempDir, cleanBase)
     progress.setInfo( 'Writing to {0}'.format(cleanPath) )
     
     #clean up tree polygons, remove small areas
@@ -300,8 +300,8 @@ def polygonize(segmented_image, temp, plotcode):
     
     #generate centroids path
     progress.setInfo( '\nEstimating stem locations' )
-    stemBase = '{0}_stemEst.shp'.format('plotcode')
-    stemPath = os.path.join(temp, stemBase)
+    stemBase = '{0}_stemEst.shp'.format(global plotCode)
+    stemPath = os.path.join(global tempDir, stemBase)
     #output polygon centroids
     processing.runalg('qgis:polygoncentroids', cleanPath, stemPath)
     if not os.path.exists(stemPath):
@@ -312,11 +312,11 @@ def polygonize(segmented_image, temp, plotcode):
 #
 #run all processes
 #
-notopoLayer = removeTopo(dsm, tempDir, plotCode, mask, maskQuery)
-filteredLayer = closeFilter(notopoLayer, tempDir, plotCode)
-segLayer = segmentation(filteredLayer, tempDir, plotCode)
-cleanSeg = segCalc(segLayer, filteredLayer, tempDir, plotCode)
-treeVectors, stemEst = polygonize(cleanSeg, tempDir, plotCode)
+notopoLayer = removeTopo(dsm, mask, maskQuery)
+filteredLayer = closeFilter(notopoLayer)
+segLayer = segmentation(filteredLayer)
+cleanSeg = segCalc(segLayer, filteredLayer)
+treeVectors, stemEst = polygonize(cleanSeg)
 
 Tree_Crowns = treeVectors
 Stem_Estimations = stemEst
