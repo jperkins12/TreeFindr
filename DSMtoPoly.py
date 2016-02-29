@@ -30,31 +30,30 @@ from PyQt4.QtCore import *
 from qgis.analysis import *
 import processing
 import os
+import math
 
 progress.setText( '\nStarting...' )
 
 #change variable names to something more manageable
-dsm = DSM
+dsm_raster = DSM
 plotCode = Plot_Code
 tempDir = Set_temp_Directory
-mask = Mask_Image
+mask_raster = Mask_Image
 maskQuery = Use_Mask
 if not maskQuery:
     mask = None
 
 progress.setInfo('\nIntermediate files will be saved to {0}'.format(tempDir))
 
-
-def removeTopo(dsm_raster, mask_raster, maskQ):
     
-    global tempDir, plotCode
+def removeTopo( dsm_raster, mask_raster, maskQuery, tempDir, plotCode ):
+    
     #entries list for storing raster calculator info
     entries = []
     
     #check for mask layer
-    if maskQ is True:
+    if maskQuery is True:
         progress.setInfo( '\n Mask file: {0}'.format(mask_raster) )
-        maskQ = True
         #load mask layer
         mask_info = QFileInfo(mask_raster)
         mName = mask_info.basename()
@@ -100,7 +99,7 @@ def removeTopo(dsm_raster, mask_raster, maskQ):
 
     #process calculation with input extent and resolution
     #calculation is to remove all data points below threshold
-    if maskQ is False:
+    if maskQuery is False:
         calcString = '({0}>{1})*({0}<{2})*{0}'.format(dsm1.ref, threshdn, threshup)
     else:
         calcString = '({0}>{1})*({0}<{2})*{0}*{3}'.format(dsm1.ref, threshdn, threshup,mask1.ref)
@@ -117,25 +116,22 @@ def removeTopo(dsm_raster, mask_raster, maskQ):
     
     return calcPath
 
-def closeFilter(no_topo):
+def closeFilter( notopoLayer, tempDir, plotCode ):
     
     #generate filtered file path
     #and process closing filter
     
-    global tempDir, plotCode
     progress.setInfo( '\nPerforming closing filter' )
     
     filteredName = '{0}_Filtered.tif'.format( plotCode)
     filteredPath = os.path.join( tempDir, filteredName)
     progress.setInfo( 'Writing to {0}'.format(filteredPath) )
     
-    processing.runalg('saga:morphologicalfilter', no_topo,  1,  2, 3, filteredPath)
+    processing.runalg('saga:morphologicalfilter', notopoLayer,  1,  2, 3, filteredPath)
     
     return filteredPath    
 
-def segmentation(filtered_layer):
-    
-    global tempDir, plotCode
+def segmentation( filteredPath, tempDir, plotCode ):
     
     progress.setInfo( '\nSegmenting image' )
     segName = '{0}_seg.tif'.format( plotCode)
@@ -143,23 +139,22 @@ def segmentation(filtered_layer):
     progress.setInfo( 'Writing to {0}'.format(segPath) )
     
     #runs watershed segmenation on image
-    processing.runalg('saga:watershedsegmentation',  filtered_layer, 1, 1, 1, 4, True, True, segPath, None, None)
+    processing.runalg('saga:watershedsegmentation',  filteredPath, 1, 1, 1, 4, True, True, segPath, None, None)
     
     progress.setInfo( 'Image segmented' )
     
     return segPath
 
-def segCalc(segmentation_layer, filtered_layer):
+def segCalc( segPath, filteredPath, tempDir, plotCode ):
     
     #multiplies no topo by dsm to isolate tree crowns
     #load filtered raster
     
-    global tempDir, plotCode
     progress.setInfo( '\nRemoving ground from segmentation raster' )
     
-    filteredInfo = QFileInfo(filtered_layer)
+    filteredInfo = QFileInfo(filteredPath)
     filteredBase = filteredInfo.baseName()
-    filtLayer = QgsRasterLayer(filtered_layer, filteredBase)
+    filtLayer = QgsRasterLayer(filteredPath, filteredBase)
     if not filtLayer.isValid():
         progress.setInfo( 'Filtered layer failed to load!' )
     
@@ -173,9 +168,9 @@ def segCalc(segmentation_layer, filtered_layer):
     entries.append( filt1 )
     
     #load segmented raster
-    segInfo = QFileInfo(segmentation_layer)
+    segInfo = QFileInfo(segPath)
     segBase = segInfo.baseName()
-    segLayer = QgsRasterLayer(segmentation_layer, segBase)
+    segLayer = QgsRasterLayer(segPath, segBase)
     if not segLayer.isValid():
         progress.setInfo( 'Segmentation layer failed to load!' )
     
@@ -188,36 +183,35 @@ def segCalc(segmentation_layer, filtered_layer):
     entries.append( seg1 )
     
     calcBase = '{0}_segRaster_clean.tif'.format( plotCode)
-    calcPath = os.path.join( tempDir, calcBase)
-    progress.setInfo( 'Writing to {0}'.format(calcPath) )
+    segCalcPath = os.path.join( tempDir, calcBase)
+    progress.setInfo( 'Writing to {0}'.format(segCalcPath) )
     
     calcString = '({0} > 0)*{1}'.format(filt1.ref, seg1.ref)
     #print calcString
     
-    calc = QgsRasterCalculator(calcString, calcPath, 'GTiff', segLayer.extent(), segLayer.width(), segLayer.height(),  entries )
+    calc = QgsRasterCalculator(calcString, segCalcPath, 'GTiff', segLayer.extent(), segLayer.width(), segLayer.height(),  entries )
 
     er2 = calc.processCalculation()
     if er2 is not 0:
         progress.setInfo( 'Calc error {0}'.format(er2) )
     
-    return calcPath
+    return segCalcPath
 
-def polygonize(segmented_image):
+def polygonize( segCalcPath, tempDir, plotCode ):
     
     #outputs cleaned vectorized tree crowns
     #setup output path
     
-    global tempDir, plotCode
     progress.setInfo( '\nPolygonizing segmentation layer' )
     
-    vecBase = '{0}_treeCrowns.shp'.format( plotCode)
-    vecPath = os.path.join( tempDir, vecBase)
-    progress.setInfo( 'Writing to {0}'.format(vecPath) )
+    vecBase = '{0}_treeCrowns.shp'.format( plotCode )
+    vecPath = os.path.join( tempDir, vecBase )
+    progress.setInfo( 'Writing to {0}'.format( vecPath ) )
     
-    processing.runalg('gdalogr:polygonize', segmented_image, 'DN', vecPath)
+    processing.runalg( 'gdalogr:polygonize', segCalcPath, 'DN', vecPath )
     
     #load new layer
-    treeLayer = QgsVectorLayer(vecPath, 'treePolygons','ogr')
+    treeLayer = QgsVectorLayer( vecPath, 'treePolygons','ogr' )
     if not treeLayer.isValid():
         progress.setInfo( 'treeLayer failed to load!' )
     
@@ -260,18 +254,41 @@ def polygonize(segmented_image):
     #snap tolerance -> -1 (no snapping)
     #v.in.org min area -> 0.0001
     processing.runalg('grass:v.clean', vecPath, 10, 1.4, regionString, -1, 0.0001, cleanPath, None)
+
+    return cleanPath
+
+def reproject( cleanPath, tempDir, plotCode ):
     
+    #reproject to a metered coordinate system
+    #OR north state plane
+    targetCRS = 'ESPG:3645'
+    rpBase = '{0}_reprojected.shp'.format(plotCode)
+    rpPath = os.path.join(tempDir, rpBase)
+    
+    progress.setInfo( '\nReprojecting to {0}'.format( targetCRS ) )
+    
+    processing.runalg( 'qgis:reprojectlayer', cleanPath, targetCRS, rpPath )
+    
+    return rpPath
+    
+def extractAttributes( rpPath, tempDir, plotCode ):
+
+    progress.setInfo( '\nCreating attribute fields' )
     #open cleaned layer
-    cleanLayer = QgsVectorLayer(cleanPath, 'cleanPolygons', 'ogr')
+    cleanLayer = QgsVectorLayer(rpPath, 'cleanPolygons', 'ogr')
     if not cleanLayer.isValid():
         progress.setInfo( 'Cleaned layer failed to load!' )
     
     #using caps again because the data provider did not change
-    progress.setInfo( '\nCreating TreeID field' )
+    
+    caps = cleanLayer.dataProvider().capabilities()
     if caps & QgsVectorDataProvider.AddAttributes:
-        newfield = cleanLayer.dataProvider().addAttributes([QgsField('TreeID', QVariant.Int)])
+        newfield = cleanLayer.dataProvider().addAttributes([QgsField( 'TreeID', QVariant.Int )])
+        areafield = cleanLayer.dataProvider().addAttributes([QgsField( 'Area', QVariant.Double )])
+        radfield = cleanLayer.dataProvider().addAttributes([QgsField( 'Radius', QVariant.Double )])
+        newFieldsList = [ 'TreeID', 'Area', 'Radius' ]
     else:
-        progress.setInfo( 'Cannot add TreeID field' )
+        progress.setInfo( 'Cannot add attribute fields' )
         
     cleanLayer.updateFields()
     
@@ -281,8 +298,16 @@ def polygonize(segmented_image):
         cleanIter = cleanLayer.getFeatures()
         indexVal = 0
         for item in cleanIter:
+            #create TreeID
             item['TreeID'] = indexVal
             indexVal += 1
+            #add area
+            #make sure you know what units for CRS
+            geom = item.geometry()
+            item['Area'] = geom.area()
+            #add radius
+            treeRad = math.sqrt( ((geom.area())/(math.pi)) )
+            item['Radius'] = 0 #treeRad
             cleanLayer.updateFeature(item)
             
         cleanLayer.commitChanges()
@@ -292,7 +317,7 @@ def polygonize(segmented_image):
         count = 0
         dList = []
         for field in cleanLayer.pendingFields():
-            if field.name() != 'TreeID':
+            if field.name() not in newFieldsList:
                 dList.append(count)
             count += 1
             
@@ -309,22 +334,24 @@ def polygonize(segmented_image):
     stemBase = '{0}_stemEst.shp'.format( plotCode)
     stemPath = os.path.join( tempDir, stemBase)
     #output polygon centroids
-    processing.runalg('qgis:polygoncentroids', cleanPath, stemPath)
+    processing.runalg('qgis:polygoncentroids', rpPath, stemPath)
     if not os.path.exists(stemPath):
         process.setInfo( 'Centroid layer failed!' )
-
-    return cleanPath, stemPath
+        
+    return stemPath 
 
 #
 #run all processes
 #
-notopoLayer = removeTopo(dsm, mask, maskQuery)
-filteredLayer = closeFilter(notopoLayer)
-segLayer = segmentation(filteredLayer)
-cleanSeg = segCalc(segLayer, filteredLayer)
-treeVectors, stemEst = polygonize(cleanSeg)
+notopoLayer = removeTopo(dsm_raster, mask_raster, maskQuery, tempDir, plotCode)
+filteredPath = closeFilter(notopoLayer, tempDir, plotCode)
+segPath = segmentation(filteredPath, tempDir, plotCode)
+segCalcPath = segCalc(segPath, filteredPath, tempDir, plotCode)
+cleanPath = polygonize(segCalcPath, tempDir, plotCode)
+rpPath = reproject( cleanPath, tempDir, plotCode )
+stemPath = extractAttributes( rpPath, tempDir, plotCode )
 
-Tree_Crowns = treeVectors
-Stem_Estimations = stemEst
+Tree_Crowns = rpPath
+Stem_Estimations = stemPath
 
 progress.setInfo( 'finished\n' )
