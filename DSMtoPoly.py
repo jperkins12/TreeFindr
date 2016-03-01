@@ -28,6 +28,7 @@ from qgis.core import *
 from PyQt4.QtGui import *
 from PyQt4.QtCore import *
 from qgis.analysis import *
+from osgeo import ogr
 import processing
 import os
 import math
@@ -45,7 +46,13 @@ if not maskQuery:
 
 progress.setInfo('\nIntermediate files will be saved to {0}'.format(tempDir))
 
+def remSHP(shpPath):
     
+    #use to remove shapefiles so they can be safely replaced
+    shdriver = ogr.GetDriverByName( 'ESRI Shapefile' )
+    if os.path.exists( shpPath ):
+        shdriver.DeleteDataSource( shpPath )
+
 def removeTopo( dsm_raster, mask_raster, maskQuery, tempDir, plotCode ):
     
     #entries list for storing raster calculator info
@@ -193,7 +200,7 @@ def segCalc( segPath, filteredPath, tempDir, plotCode ):
 
     er2 = calc.processCalculation()
     if er2 is not 0:
-        progress.setInfo( 'Calc error {0}'.format(er2) )
+        progress.setInfo( 'Calc error: {0}'.format(er2) )
     
     return segCalcPath
 
@@ -206,6 +213,7 @@ def polygonize( segCalcPath, tempDir, plotCode ):
     
     vecBase = '{0}_treeCrowns.shp'.format( plotCode )
     vecPath = os.path.join( tempDir, vecBase )
+    remSHP( vecPath )
     progress.setInfo( 'Writing to {0}'.format( vecPath ) )
     
     processing.runalg( 'gdalogr:polygonize', segCalcPath, 'DN', vecPath )
@@ -245,7 +253,8 @@ def polygonize( segCalcPath, tempDir, plotCode ):
     
     #new vector output name
     cleanBase = vecBase.replace('.shp', '_clean.shp')
-    cleanPath = os.path.join( tempDir, cleanBase)
+    cleanPath = os.path.join( tempDir, cleanBase )
+    remSHP( cleanPath )
     progress.setInfo( 'Writing to {0}'.format(cleanPath) )
     
     #clean up tree polygons, remove small areas
@@ -253,8 +262,23 @@ def polygonize( segCalcPath, tempDir, plotCode ):
     #threshold -> 1.4
     #snap tolerance -> -1 (no snapping)
     #v.in.org min area -> 0.0001
-    processing.runalg('grass:v.clean', vecPath, 10, 1.4, regionString, -1, 0.0001, cleanPath, None)
+    #changed to grass7
+    processing.runalg('grass7:v.clean.advanced', vecPath, 'rmarea,rmdupl', 1.4, regionString, -1, 0.0001, cleanPath, None)
+    
+    if not os.path.exists( cleanPath ):
+        progress.setInfo( 'Cleaning process failed!' )
 
+    #initial feature count
+    #used to debug duplicate feature outputs
+    '''
+    initialLayer = QgsVectorLayer(cleanPath, 'InitialCount', 'ogr')
+    initialFields = initialLayer.getFeatures()
+    iniCount = 0
+    for ini in initialFields:
+        iniCount += 1
+    progress.setInfo( 'Initial Count: {0}'.format(iniCount) )
+    '''
+    
     return cleanPath
 
 def reproject( cleanPath, tempDir, plotCode ):
@@ -264,14 +288,16 @@ def reproject( cleanPath, tempDir, plotCode ):
     targetCRS = 'ESPG:3645'
     rpBase = '{0}_reprojected.shp'.format(plotCode)
     rpPath = os.path.join(tempDir, rpBase)
+    remSHP( rpPath )
     
     progress.setInfo( '\nReprojecting to {0}'.format( targetCRS ) )
+    progress.setInfo( 'Writing to {0}'.format( rpPath ) )
     
     processing.runalg( 'qgis:reprojectlayer', cleanPath, targetCRS, rpPath )
     
     return rpPath
     
-def extractAttributes( rpPath, tempDir, plotCode ):
+def extractAttributes( rpPath, dsm_raster, tempDir, plotCode ):
 
     progress.setInfo( '\nCreating attribute fields' )
     #open cleaned layer
@@ -304,12 +330,16 @@ def extractAttributes( rpPath, tempDir, plotCode ):
             #add area
             #make sure you know what units for CRS
             geom = item.geometry()
-            item['Area'] = geom.area()
+            d = QgsDistanceArea()
+            m = d.measure( geom )
+            metricM = d.convertAreaMeasurement( m, QgsUnitTypes.SquareMeters )
+            item['Area'] = metricM
             #add radius
-            treeRad = math.sqrt( ((geom.area())/(math.pi)) )
-            item['Radius'] = 0 #treeRad
+            treeRad = math.sqrt( ((metricM)/(math.pi)) )
+            item['Radius'] = treeRad
             cleanLayer.updateFeature(item)
-            
+        
+        #progress.setInfo( 'Reporting {0} trees'.format(indexVal))
         cleanLayer.commitChanges()
         
         #remove extra fields
@@ -329,16 +359,26 @@ def extractAttributes( rpPath, tempDir, plotCode ):
         
     cleanLayer.updateFields()
     
+    #generate new output path
+    statsBase = '{0}_treeCrowns_stats.shp'.format(plotCode)
+    statsPath = os.path.join(tempDir, statsBase)
+    remSHP(statsPath)
+    progress.setInfo('Writing to {0}'.format(statsPath))
+    
+    #generate zonal stats
+    processing.runalg('saga:gridstatisticsforpolygons', dsm_raster, rpPath, False, False, True, False, False, False, False, False, 0, statsPath)
+    
     #generate centroids path
     progress.setInfo( '\nEstimating stem locations' )
     stemBase = '{0}_stemEst.shp'.format( plotCode)
     stemPath = os.path.join( tempDir, stemBase)
+    remSHP( stemPath )
     #output polygon centroids
     processing.runalg('qgis:polygoncentroids', rpPath, stemPath)
     if not os.path.exists(stemPath):
-        process.setInfo( 'Centroid layer failed!' )
+        progress.setInfo( 'Centroid layer failed!' )
         
-    return stemPath 
+    return statsPath, stemPath
 
 #
 #run all processes
@@ -348,10 +388,12 @@ filteredPath = closeFilter(notopoLayer, tempDir, plotCode)
 segPath = segmentation(filteredPath, tempDir, plotCode)
 segCalcPath = segCalc(segPath, filteredPath, tempDir, plotCode)
 cleanPath = polygonize(segCalcPath, tempDir, plotCode)
-rpPath = reproject( cleanPath, tempDir, plotCode )
-stemPath = extractAttributes( rpPath, tempDir, plotCode )
+#reproject seems unnecessary
+#rpPath = reproject( cleanPath, tempDir, plotCode )
+#stemPath = extractAttributes( rpPath, tempDir, plotCode )
+statsPath, stemPath = extractAttributes( cleanPath, dsm_raster, tempDir, plotCode )
 
-Tree_Crowns = rpPath
+Tree_Crowns = statsPath #rpPath
 Stem_Estimations = stemPath
 
 progress.setInfo( 'finished\n' )
