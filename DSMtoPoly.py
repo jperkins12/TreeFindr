@@ -20,6 +20,8 @@
 ##DSM=raster
 ##Use_Mask=boolean False
 ##Mask_Image=raster
+##Segmentation_Threshold=number 4
+##Clean_Threshold=number 1.4
 ##Tree_Crowns=output vector
 ##Stem_Estimations=output vector
 ##Set_temp_Directory=folder
@@ -41,6 +43,8 @@ plotCode = Plot_Code
 tempDir = Set_temp_Directory
 mask_raster = Mask_Image
 maskQuery = Use_Mask
+segThresh = Segmentation_Threshold
+cleanThresh = Clean_Threshold
 if not maskQuery:
     mask = None
 
@@ -63,7 +67,7 @@ def removeTopo( dsm_raster, mask_raster, maskQuery, tempDir, plotCode ):
         progress.setInfo( '\n Mask file: {0}'.format(mask_raster) )
         #load mask layer
         mask_info = QFileInfo(mask_raster)
-        mName = mask_info.basename()
+        mName = mask_info.baseName()
         maskLayer = QgsRasterLayer(mask_raster,mName)
         if not maskLayer.isValid():
             progress.setInfo( 'Mask layer failed to load!' )
@@ -134,11 +138,11 @@ def closeFilter( notopoLayer, tempDir, plotCode ):
     filteredPath = os.path.join( tempDir, filteredName)
     progress.setInfo( 'Writing to {0}'.format(filteredPath) )
     
-    processing.runalg('saga:morphologicalfilter', notopoLayer,  1,  2, 3, filteredPath)
+    processing.runalg('saga:morphologicalfilter', notopoLayer, 1,  2, 3, filteredPath)
     
     return filteredPath    
 
-def segmentation( filteredPath, tempDir, plotCode ):
+def segmentation( segThresh, filteredPath, tempDir, plotCode ):
     
     progress.setInfo( '\nSegmenting image' )
     segName = '{0}_seg.tif'.format( plotCode)
@@ -146,7 +150,7 @@ def segmentation( filteredPath, tempDir, plotCode ):
     progress.setInfo( 'Writing to {0}'.format(segPath) )
     
     #runs watershed segmenation on image
-    processing.runalg('saga:watershedsegmentation',  filteredPath, 1, 1, 1, 4, True, True, segPath, None, None)
+    processing.runalg('saga:watershedsegmentation',  filteredPath, 1, 1, 1, segThresh, True, True, segPath, None, None)
     
     progress.setInfo( 'Image segmented' )
     
@@ -204,7 +208,7 @@ def segCalc( segPath, filteredPath, tempDir, plotCode ):
     
     return segCalcPath
 
-def polygonize( segCalcPath, tempDir, plotCode ):
+def polygonize( cleanThresh, segCalcPath, tempDir, plotCode ):
     
     #outputs cleaned vectorized tree crowns
     #setup output path
@@ -263,7 +267,7 @@ def polygonize( segCalcPath, tempDir, plotCode ):
     #snap tolerance -> -1 (no snapping)
     #v.in.org min area -> 0.0001
     #changed to grass7
-    processing.runalg('grass7:v.clean.advanced', vecPath, 'rmarea,rmdupl', 1.4, regionString, -1, 0.0001, cleanPath, None)
+    processing.runalg('grass7:v.clean.advanced', vecPath, 'rmarea,rmdupl', cleanThresh, regionString, -1, 0.0001, cleanPath, None)
     
     if not os.path.exists( cleanPath ):
         progress.setInfo( 'Cleaning process failed!' )
@@ -385,9 +389,9 @@ def extractAttributes( rpPath, dsm_raster, tempDir, plotCode ):
 #
 notopoLayer = removeTopo(dsm_raster, mask_raster, maskQuery, tempDir, plotCode)
 filteredPath = closeFilter(notopoLayer, tempDir, plotCode)
-segPath = segmentation(filteredPath, tempDir, plotCode)
+segPath = segmentation(segThresh, filteredPath, tempDir, plotCode)
 segCalcPath = segCalc(segPath, filteredPath, tempDir, plotCode)
-cleanPath = polygonize(segCalcPath, tempDir, plotCode)
+cleanPath = polygonize(cleanThresh, segCalcPath, tempDir, plotCode)
 #reproject seems unnecessary
 #rpPath = reproject( cleanPath, tempDir, plotCode )
 #stemPath = extractAttributes( rpPath, tempDir, plotCode )
