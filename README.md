@@ -1,4 +1,4 @@
-![alt tag](https://github.com/jperkins12/TreeFindr/blob/master/TreeFindr_Logo.png)
+![alt tag](https://github.com/jperkins12/TreeFindr/blob/master/Images/TreeFindr_Logo.png)
 v0.1
 
 ### Overview:
