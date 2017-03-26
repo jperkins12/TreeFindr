@@ -2,7 +2,7 @@
 v0.1
 
 ### Overview:
-The TreeFindr project is aimed at providing an open-source pathway to estimating forest biometrics from rasterized forest height profiles. It is currently in the early stages of development as a QGIS plugin with an accuracy assessment in R.
+The TreeFindr project is aimed at providing an open-source pathway to estimating forest biometrics from rasterized forest height profiles. It is currently in the early stages of development as a QGIS script with an accuracy assessment in R.
 
 ### Using the QGIS plugin:
 
